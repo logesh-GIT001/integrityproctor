@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+backend/venv/
+backend/__pycache__/
+.pnp
+.pnp.*
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Databases and secrets
+*.db
+.env*
+*.pem
+
+# IDE / System files
+.DS_Store
+.vscode/
+.idea/
+*.log

@@ -1,0 +1,12 @@
+**/node_modules
+**/venv
+**/.next
+**/.git
+**/integrity_proctor.db
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.DS_Store
+dist
+.env
