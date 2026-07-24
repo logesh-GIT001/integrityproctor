@@ -3,6 +3,12 @@
 # Kill any background processes spawned by this script on exit
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
+# Clean up existing processes on ports 3000 and 8000 to prevent EADDRINUSE conflicts
+echo "[SYSTEM] Cleaning up any existing services on ports 3000 and 8000..."
+fuser -k 8000/tcp 2>/dev/null
+fuser -k 3000/tcp 2>/dev/null
+sleep 1
+
 echo "=========================================================="
 echo "Starting IntegrityProctor Systems Suite..."
 echo "=========================================================="

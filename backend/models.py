@@ -7,12 +7,15 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id = Column(Integer, primary_key=True, index=True)
+    sec_id = Column(String, unique=True, index=True, nullable=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     status = Column(String, default="invited")  # invited, testing, completed
     trust_score = Column(Float, default=100.0)
     technical_score = Column(Float, default=0.0)
     ai_summary = Column(Text, nullable=True)
+    overall_time_limit = Column(Integer, nullable=True, default=1200)  # in seconds, null means no limit
+    domain = Column(String, default="General", nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -33,6 +36,8 @@ class Question(Base):
     sample_code = Column(Text, nullable=True)  # starter code template for coding questions
     test_cases = Column(Text, nullable=True)  # JSON-serialized list of input/output dicts
     correct_answer = Column(String, nullable=True)  # correct option letter for MCQ
+    time_limit = Column(Integer, nullable=True)  # in seconds, null means no limit
+    domain = Column(String, default="General", nullable=True)
 
     answers = relationship("CandidateAnswer", back_populates="question", cascade="all, delete-orphan")
 
@@ -63,3 +68,8 @@ class IntegrityEvent(Base):
     details = Column(Text, nullable=True)  # JSON or text description
 
     candidate = relationship("Candidate", back_populates="events")
+
+class Setting(Base):
+    __tablename__ = "settings"
+    key = Column(String, primary_key=True, index=True)
+    value = Column(String, nullable=True)

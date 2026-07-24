@@ -1,0 +1,260 @@
+================================================================================
+                     INTEGRITYPROCTOR SYSTEM - ARCHITECTURE & DESIGN
+================================================================================
+Project Root: /home/loki/Downloads/aarvi
+Created Date: July 10, 2026
+Documentation Version: 1.0.0
+================================================================================
+
+1. CORE IDEA & MOTIVATION
+================================================================================
+Traditional remote exams and tech hiring assessments suffer from high rates of 
+dishonesty (tab switching, searching answers on secondary devices, multiple 
+people in the room, looking away to read notes, voice sharing, etc.). Existing 
+solutions either require expensive, slow manual review by human invigilators or 
+require candidates to install highly intrusive kernel-level spyware.
+
+IntegrityProctor solves this by introducing a web-based, privacy-first, and 
+highly automated AI-assisted remote monitoring system. The core design principles 
+include:
+* Privacy-First & Client-Side Inference: Face tracking, gaze deviation, head pose, 
+  and mouth movement checks occur directly in the candidate's browser using 
+  lightweight WebAssembly models. No continuous video stream is sent to the cloud, 
+  protecting candidate privacy and eliminating massive server-side bandwidth costs.
+* Multimodal Security Logging: Combines visual telemetry (Webcam & MediaPipe), 
+  acoustic telemetry (microphone volume coupled with lip-sync checks), and 
+  browser context telemetry (fullscreen lock, focus loss, tab switching, and 
+  copy-paste blocks).
+* Unified Grading & AI Auditing: Combines standard MCQ evaluation and sandbox 
+  code grading (executing candidate code against unit test cases) with proctoring 
+  logs, sending a comprehensive data packet to a Large Language Model (Groq Cloud 
+  / Llama 3.3) to issue an automated hiring recommendation (Pass, Flag, Reject).
+
+---
+
+2. KEY FEATURES & FUNCTIONALITY
+================================================================================
+* System Pre-Flight Calibration: Before the exam starts, the frontend performs 
+  real-time checks on the user's camera, microphone, screen API, and network 
+  latency to guarantee a compatible environment.
+* Dynamic Coding Sandbox & Auto-Grader: Supports coding challenges where candidates 
+  write code inside an editor and run unit tests. Submissions are dynamically 
+  graded inside a restricted execution environment on the backend.
+* Real-Time Computer Vision Monitoring:
+  - Face Count Monitoring: Verifies if candidate is present (0 faces = Absent) 
+    or if another person enters (2+ faces = Multiple Faces).
+  - Head Pose Estimation: Computes Yaw (turning left/right), Pitch (looking up/down), 
+    and Roll (tilting head) rotations from FaceMesh landmark ratios to detect 
+    side-glances or notes-reading.
+  - Gaze & Iris Tracking: Resolves eye movement using iris landmarks to spot 
+    candidates looking away from the monitor.
+* Acoustic Anomaly Detection (Closed-Mouth Speaking):
+  - Tracks live microphone volume via Web Audio API Analyzer Nodes.
+  - Computes Mouth Aspect Ratio (distance between top/bottom inner lip coordinates).
+  - Flags "speaking_no_movement" anomalies if significant sound is registered while 
+    the candidate's mouth remains closed (indicating another person speaking in the 
+    room or audio devices playing).
+* Browser Security Telemetry:
+  - Tab Switch / Focus Loss: Logs `tab_switch` and `window_blur` events when 
+    the candidate navigates away.
+  - Fullscreen Exit: Logs `fullscreen_exit` if the candidate attempts to exit 
+    the locked exam interface.
+  - Clipboard Blocker: Prevents and logs `copy_paste` attempts to stop cheating 
+    or code leakage.
+  - Hardware Protection: Logs `camera_offline` if a user attempts to disconnect 
+    or block their webcam mid-test.
+* Visual Evidence Capture: Captures and uploads a Base64 JPEG snapshot when a critical 
+  violation is triggered.
+* Media Storage Integration: Automatically saves proctoring artifacts. Snaps and 
+  final audio recordings are uploaded to Supabase Storage Buckets (production) 
+  or fallback local storage folders (development).
+* Recruiter/HR Dashboard: A comprehensive panel showing candidate results, 
+  interactive security incident timelines, grading results, verification audio 
+  playback, visual snapshots of flags, and LLM-generated summaries.
+
+---
+
+3. TECHNOLOGY STACK
+================================================================================
+Frontend:
+* Next.js (App Router, React 19, TypeScript)
+* WebAssembly AI: @mediapipe/tasks-vision (Google MediaPipe FaceLandmarker WebAssembly)
+* Audio Analytics: Web Audio API (AudioContext, AnalyserNode) & MediaRecorder API
+* Theme/UI: Cyberpunk-style HUD aesthetic utilizing custom styling variables
+
+Backend:
+* Python 3.10+ & FastAPI (high-performance asynchronous framework)
+* Database ORM: SQLAlchemy v2 (clean model/schema separations)
+* Database Engine: PostgreSQL (Neon / Supabase for Prod) & SQLite (local fallback)
+* HTTP client: HTTPX (async requests to Groq and Supabase Object Storage APIs)
+* Sandbox Environment: Python dynamic execution (`exec`) with isolated namespaces
+
+AI Pipelines:
+* Large Language Model: Groq Cloud API running `llama-3.3-70b-versatile` 
+  to digest proctoring events and code submissions, delivering clean text summaries.
+* Fallback Logic: Rule-based heuristic simulation engine to output report 
+  verdicts when Groq is offline or API keys are missing.
+
+Infrastructure:
+* Docker & Docker Compose: Containerized orchestration for both Frontend and 
+  Backend.
+* Cloud Hosting Compatibility: Pre-configured for Vercel (Frontend), Render/Railway 
+  (Backend), and Supabase Storage (Remote Media Storage).
+
+---
+
+4. SYSTEM ARCHITECTURE & DATA FLOW
+================================================================================
+
++--------------------------------------------------------------------------------+
+|                             CLIENT BROWSER (FRONTEND)                          |
+|                                                                                |
+|  +-----------------------+   +------------------------+   +-----------------+  |
+|  |     Assessment UI     |   |   MediaPipe Vision WASM|   | Web Audio API   |  |
+|  |  (MCQ & Code Sandbox) |   |  (Gaze, Head, Face Mesh|   |  (Volume & Lip  |  |
+|  |                       |   |   & Snapshot Capture)  |   |   Sync Check)   |  |
+|  +-----------+-----------+   +-----------+------------+   +--------+--------+  |
+|              |                           |                         |           |
+|              +-------------+-------------+-------------------------+           |
+|                            |                                                   |
+|                            v                                                   |
+|                Browser Telemetry Controller                                    |
+|               (Tab switches, Copy-Paste, full-                                 |
+|                screen monitoring, event loggers)                               |
++----------------------------+---------------------------------------------------+
+                             |
+                             |  HTTP REST & Media Payloads
+                             v
++--------------------------------------------------------------------------------+
+|                             FASTAPI BACKEND SERVER                             |
+|                                                                                |
+|      +------------------------------------------------------------------+      |
+|      |                         REST API ROUTERS                         |      |
+|      |    /candidates/          /candidates/{id}/start                  |      |
+|      |    /candidates/{id}/log-event       /candidates/{id}/submit-answer       |      |
+|      |    /candidates/{id}/complete        /candidates/{id}/upload-audio        |      |
+|      +---------------------------------+--------------------------------+      |
+|                                        |                                       |
+|                  +---------------------+---------------------+                 |
+|                  |                                           |                 |
+|                  v                                           v                 |
+|       Python Exec Code Sandbox                     Proctor Event Manager       |
+|       (Grades user submissions                     (Process anomalies, deducts |
+|        against JSON test cases)                     Trust Score & saves files) |
++------------------+-------------------------------------------+-----------------+
+                   |                                           |
+                   v                                           v
++------------------+---------------------+   +-----------------+-----------------+
+|          EXTERNAL LLM VERDICT PIPELINE |   |         DATABASE STORAGE          |
+|                                        |   |                                   |
+|   +---------------------------------+  |   |   +---------------------------+   |
+|   |         Groq Cloud API          |  |   |   |   PostgreSQL / SQLite     |   |
+|   |   (Llama-3.3-70b Summarizer)    |  |   |   |   Candidates, Questions,  |   |
+|   +---------------------------------+  |   |   |   Answers, IntegrityEvents|   |
+|                                        |   |   +---------------------------+   |
+|   +---------------------------------+  |   |                                   |
+|   |   Heuristic Fallback Engine     |  |   |   +---------------------------+   |
+|   |   (Rule-based summary builder)  |  |   |   | Supabase Bucket / Static  |   |
+|   +---------------------------------+  |   |   | (Evidence Snaps & Audio)  |   |
+|                                        |   |   +---------------------------+   |
++----------------------------------------+   +-----------------------------------+
+
+Execution Lifecycle Dataflow:
+1. Registration & Pre-Flight Check: Candidate registers their name and email, 
+   entering fullscreen mode immediately.
+2. Assessment Session: Frontend displays questions and runs MediaPipe loop (10-30Hz) 
+   and Audio Analyzer loop.
+3. Violation Triggering: If telemetry detects a violation (e.g. looking away, tab 
+   switch, speech without mouth movement), the frontend:
+   - Deducts trust points locally and displays on-screen warnings.
+   - Takes a webcam frame snapshot if it's a visual breach.
+   - Sends an HTTP POST `/log-event` payload to the backend.
+4. Answer Submission: When a candidate submits a coding response, `/submit-answer` 
+   runs the code on the backend against strict, pre-defined unit tests in a 
+   restructured exec runtime environment, outputting correct/incorrect.
+5. End of Assessment: Candidate finishes or time runs out. The client stops recording, 
+   uploads the cumulative session webm audio recording to `/upload-audio`, and 
+   calls `/complete`.
+6. AI Report Generation: The backend aggregates the entire database records of 
+   the user (Answers, Scores, Integrity Violation Logs, Timestamps), designs a 
+   prompt, passes it to the Groq API (or heuristic fallback), writes the resulting 
+   natural language summary directly into the database Candidate row, and locks 
+   the candidate profile as "completed".
+7. HR Inspection: Recruiter signs in to `/dashboard` to load the list. Clicking 
+   on a candidate retrieves their full schema, visual snapshots, audio tracks, and 
+   AI-generated report logs for visual audit.
+
+---
+
+5. DATABASE SCHEMA MODELS
+================================================================================
+* Candidate Model:
+  - id (Integer, Primary Key)
+  - sec_id (String, Unique Secure UUID ID for routes)
+  - name / email (String)
+  - status (invited, testing, completed)
+  - trust_score (Float, starts at 100.0)
+  - technical_score (Float, graded percentage)
+  - ai_summary (Text, markdown text generated by LLM)
+  - overall_time_limit (Integer, exam duration)
+  - created_at, started_at, completed_at (DateTime)
+
+* Question Model:
+  - id (Integer, Primary Key)
+  - type (mcq, coding, paragraph)
+  - title / description (Text)
+  - difficulty (easy, medium, hard)
+  - points (Integer, value weighting)
+  - choices (Text, JSON-serialized string array for MCQs)
+  - sample_code (Text, python starting template code)
+  - test_cases (Text, JSON-serialized list of args/expected outputs)
+  - correct_answer (String, correct choice key for MCQs)
+  - time_limit (Integer, optional question-specific time limit)
+
+* CandidateAnswer Model:
+  - id (Integer, Primary Key)
+  - candidate_id (Integer, ForeignKey -> Candidate)
+  - question_id (Integer, ForeignKey -> Question)
+  - mcq_answer (String)
+  - coding_submission (Text)
+  - is_correct (Boolean)
+  - points_earned (Integer)
+  - graded_at (DateTime)
+
+* IntegrityEvent Model:
+  - id (Integer, Primary Key)
+  - candidate_id (Integer, ForeignKey -> Candidate)
+  - event_type (tab_switch, fullscreen_exit, copy_paste, window_blur, 
+                face_absent, face_multiple, gaze_away, speaking_no_movement, 
+                camera_offline)
+  - timestamp (DateTime)
+  - confidence (Float)
+  - evidence_snapshot_path (String, pointer to static files or Supabase URL)
+  - details (Text)
+
+* Setting Model:
+  - key (String, Primary Key)
+  - value (String)
+  Used to store system configurations (e.g. global "overall_time_limit" = 1200, 
+  "max_strikes" = 3).
+
+---
+
+6. PROCTORING PENALTY SYSTEM
+================================================================================
+To establish an unbiased and uniform rating, the system applies predefined trust 
+score deductions per infraction:
+
+  Event Type            | Penalty | Rationale
+  ----------------------+---------+----------------------------------------------
+  yolo_phone            | -40.0   | Critical breach: using secondary device
+  face_multiple         | -30.0   | Major breach: secondary people present
+  speaking_no_movement  | -25.0   | Major breach: vocal cheating/unseen helper
+  face_absent           | -25.0   | Major breach: leaving testing area
+  fullscreen_exit       | -20.0   | Medium breach: trying to split windows
+  tab_switch            | -15.0   | Medium breach: searching online
+  gaze_away             | -10.0   | Minor breach: looking away from screen
+  window_blur           | -8.0    | Minor breach: background notifications
+  copy_paste            | -5.0    | Minor breach: pasting external code snippet
+  camera_offline        | -30.0   | Major breach: intentionally blocking lens
+================================================================================

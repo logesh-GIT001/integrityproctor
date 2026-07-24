@@ -23,3 +23,6 @@ next-env.d.ts
 .vscode/
 .idea/
 *.log
+
+# Media uploads
+backend/static/uploads/

@@ -53,20 +53,21 @@ function CompletedContent() {
           </div>
         </div>
 
-        <div className="space-y-3">
-          {/* Quick links to review result */}
+        <div className="space-y-4">
+          <div className="border border-slate-800 bg-slate-950/60 rounded-lg p-4 text-xs font-mono text-slate-400 leading-relaxed text-center">
+            🔒 The evaluation session is finalized. The hiring team has been notified and your integrity reports have been saved. You may now safely close this browser window.
+          </div>
+
           <button
-            onClick={() => router.push(`/dashboard`)}
+            onClick={() => {
+              if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+              }
+              router.push("/");
+            }}
             className="w-full bg-cyan-signal hover:bg-cyan-400 active:bg-cyan-500 text-slate-950 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs transition cursor-pointer hover:shadow-[0_0_15px_rgba(10,235,255,0.4)]"
           >
-            Open Admin/HR Dashboard
-          </button>
-          
-          <button
-            onClick={() => router.push("/")}
-            className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 font-mono text-xs py-3 rounded-lg border border-slate-700 transition cursor-pointer"
-          >
-            Register Another Candidate
+            Exit Assessment Room
           </button>
         </div>
       </div>
