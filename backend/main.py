@@ -3,6 +3,7 @@ import json
 import shutil
 from datetime import datetime
 from typing import List, Optional
+
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,12 +11,17 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 import httpx
 
-from backend.database import engine, Base, get_db, SessionLocal
-from backend.models import Candidate, Question, CandidateAnswer, IntegrityEvent, Setting
-from backend.schemas import (
-    CandidateCreate, CandidateResponse, QuestionResponse,
-    AnswerSubmit, AnswerResponse, IntegrityEventCreate,
-    IntegrityEventResponse, CandidateReport
+from database import engine, Base, get_db, SessionLocal
+from models import Candidate, Question, CandidateAnswer, IntegrityEvent, Setting
+from schemas import (
+    CandidateCreate,
+    CandidateResponse,
+    QuestionResponse,
+    AnswerSubmit,
+    AnswerResponse,
+    IntegrityEventCreate,
+    IntegrityEventResponse,
+    CandidateReport,
 )
 
 # Create tables
