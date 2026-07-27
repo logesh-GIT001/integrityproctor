@@ -726,13 +726,24 @@ def parse_single_question_chunk(chunk_text: str) -> dict:
         correct_answer = choices[0]
         
     desc_lines = []
+    in_explanation = False
     for line in lines:
         if line == first_line and len(lines) > 1 and re.match(r'^(?:Question\s*)?\d+[\.\)]\s+[A-Za-z]', line):
             if not re.search(r'[\?\:]', line) and len(line) < 40:
                 continue
         if re.match(choice_line_pattern, line, re.IGNORECASE):
             continue
-        desc_lines.append(line)
+        if re.search(r"(?:✅\s*)?(?:Answer|Correct|Key)[\s:]*", line, re.IGNORECASE):
+            continue
+        if re.search(r"^Explanation[\s:]*", line, re.IGNORECASE):
+            in_explanation = True
+            continue
+        if in_explanation:
+            continue
+            
+        line_clean = re.sub(r'^(?:Question\s*)?\d+[\.\)]\s*', '', line).strip()
+        if line_clean:
+            desc_lines.append(line_clean)
         
     desc = "\n".join(desc_lines).strip()
     
@@ -792,7 +803,7 @@ async def generate_question(payload: dict, db: Session = Depends(get_db)):
                 "Each question object in the list must represent a single question and have exactly these keys:\n"
                 "- 'type': 'mcq' or 'paragraph' or 'coding'\n"
                 "- 'title': A short, clear title for the question (e.g. 'Vocabulary choose word', 'Grammar Agreement', etc.)\n"
-                "- 'description': The full question text/description prompt\n"
+                "- 'description': ONLY the question text/problem prompt for the candidate. DO NOT include options/choices, answers (e.g. 'Answer: C'), or explanations in the description field!\n"
                 "- 'difficulty': 'easy', 'medium', or 'hard'\n"
                 "- 'points': An integer representing difficulty points (e.g. 10 for easy, 20 for medium, 30 for hard)\n"
                 "- 'choices': For mcq, a list of 4 string choices. For paragraph or coding, null.\n"
@@ -800,7 +811,8 @@ async def generate_question(payload: dict, db: Session = Depends(get_db)):
                 "- 'sample_code': For coding questions, provide starter template code (e.g., Python function definition with 'pass'). For mcq or paragraph, null.\n"
                 "- 'test_cases': For coding questions, provide a list of test cases, each being an object like {'args': [...], 'expected': ...}. For mcq or paragraph, null.\n"
                 "- 'time_limit': An integer representing the time limit in seconds for this specific question (e.g. 60 for MCQ, 300 for coding). Use null if no limit is specified.\n"
-                "\nCRITICAL: If the user provides multiple numbered or separate questions (e.g. 1 to 10), you MUST output ALL questions as separate items inside the 'questions' list. Do NOT merge them into one question or return only the first question.\n"
+                "\nCRITICAL: Keep 'description' strictly limited to the question text itself. Never leak 'Answer:', 'Explanation:', or choice options inside the 'description' string.\n"
+                "CRITICAL: If the user provides multiple numbered or separate questions (e.g. 1 to 10), you MUST output ALL questions as separate items inside the 'questions' list. Do NOT merge them into one question or return only the first question.\n"
                 "\nReturn ONLY valid JSON. Do not include markdown code block formatting (like ```json) or any conversational text."
             )
             
