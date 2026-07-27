@@ -33,10 +33,24 @@ app = FastAPI(title="Integrity Proctor API")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Configure CORS origins
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://integrityproctor.vercel.app",
+]
+
+cors_origins_env = os.getenv("CORS_ORIGINS")
+if cors_origins_env:
+    for o in cors_origins_env.split(","):
+        o_clean = o.strip()
+        if o_clean and o_clean not in origins:
+            origins.append(o_clean)
+
 # Add CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For demo purposes
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
