@@ -827,8 +827,11 @@ export default function Dashboard() {
       });
       if (res.ok) {
         const data = await res.json();
+        const count = data.count || 1;
         setGeneratedQuestionSuccess(
-          `Successfully processed! Question "${data.question.title}" (${data.question.type.toUpperCase()}) was created and added to the test portal.`
+          count > 1 
+            ? `Successfully processed batch! ${count} questions were created and added to the test portal.`
+            : `Successfully processed! Question "${data.question.title}" (${data.question.type.toUpperCase()}) was created and added to the test portal.`
         );
         setQuestionPrompt("");
         setCustomAiDomain("");

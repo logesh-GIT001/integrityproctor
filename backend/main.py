@@ -679,101 +679,101 @@ def reset_candidate_session(candidate_id: str, db: Session = Depends(get_db)):
 
 # --- AI Question Generator ---
 
-def fallback_parse_question(prompt_text: str) -> dict:
+def parse_single_question_chunk(chunk_text: str) -> dict:
     import re
+    lines = [l.strip() for l in chunk_text.strip().split("\n") if l.strip()]
+    if not lines:
+        return None
     
-    # Check if a time limit is requested in the prompt
+    first_line = lines[0]
+    title_clean = re.sub(r'^(?:Question\s*)?\d+[\.\)]\s*', '', first_line).strip()
+    if not title_clean:
+        title_clean = "AI Generated Question"
+    elif len(title_clean) > 50:
+        title_clean = title_clean[:47] + "..."
+        
+    choice_line_pattern = r"^\s*(?:\()?([A-D])[\)\.\:\-]\s*(.+)$"
+    choices = []
+    option_map = {}
+    
+    for line in lines:
+        m = re.match(choice_line_pattern, line, re.IGNORECASE)
+        if m:
+            letter = m.group(1).upper()
+            content = m.group(2).strip()
+            if len(content) > 0 and letter not in option_map:
+                choices.append(content)
+                option_map[letter] = content
+                
+    correct_answer = None
+    ans_line = None
+    for line in lines:
+        if re.search(r"(?:answer|correct|key)", line, re.IGNORECASE):
+            ans_line = line
+            break
+            
+    if ans_line:
+        letter_match = re.search(r"\b([A-D])\b", ans_line.replace("Answer", "").replace("answer", "").replace("Correct", ""))
+        if letter_match and letter_match.group(1).upper() in option_map:
+            correct_answer = option_map[letter_match.group(1).upper()]
+        else:
+            for c in choices:
+                if c.lower() in ans_line.lower():
+                    correct_answer = c
+                    break
+                    
+    if not correct_answer and choices:
+        correct_answer = choices[0]
+        
+    desc_lines = []
+    for line in lines:
+        if line == first_line and len(lines) > 1 and re.match(r'^(?:Question\s*)?\d+[\.\)]\s+[A-Za-z]', line):
+            if not re.search(r'[\?\:]', line) and len(line) < 40:
+                continue
+        if re.match(choice_line_pattern, line, re.IGNORECASE):
+            continue
+        desc_lines.append(line)
+        
+    desc = "\n".join(desc_lines).strip()
+    
     time_limit = None
-    time_match = re.search(r"(\d+)\s*(?:sec|second|min|minute)s?", prompt_text, re.IGNORECASE)
+    time_match = re.search(r"(\d+)\s*(?:sec|second|min|minute)s?", chunk_text, re.IGNORECASE)
     if time_match:
         val = int(time_match.group(1))
-        if "min" in time_match.group(0).lower():
-            time_limit = val * 60
-        else:
-            time_limit = val
-            
-    # Check if coding is requested
-    is_coding = any(word in prompt_text.lower() for word in ["coding", "function", "write a function", "javascript", "python", "test cases", "program"])
-    
-    if is_coding:
-        # Simple coding structure guesser
-        title = "Coding Challenge"
-        lines = [l.strip() for l in prompt_text.split("\n") if l.strip()]
-        if lines:
-            title = lines[0][:40] + ("..." if len(lines[0]) > 40 else "")
-            
-        sample_code = "def solution(*args):\n    # Write code here\n    pass"
-        if "javascript" in prompt_text.lower() or "js" in prompt_text.lower():
-            sample_code = "function solution() {\n    // Write code here\n}"
-            
-        return {
-            "type": "coding",
-            "title": title,
-            "description": prompt_text,
-            "difficulty": "medium",
-            "points": 20,
-            "choices": None,
-            "correct_answer": None,
-            "sample_code": sample_code,
-            "test_cases": [
-                {"args": [1], "expected": 1}
-            ],
-            "time_limit": time_limit
-        }
-    else:
-        # Try to parse options for MCQ
-        pattern = r"([A-D])[\)\.\s]+([^\n]+)"
-        matches = re.findall(pattern, prompt_text)
+        time_limit = val * 60 if "min" in time_match.group(0).lower() else val
         
-        choices = []
-        option_map = {}
-        for letter, content in matches:
-            content_clean = content.strip()
-            choices.append(content_clean)
-            option_map[letter.upper()] = content_clean
+    q_type = "mcq" if choices else ("coding" if "function" in chunk_text.lower() or "code" in chunk_text.lower() else "paragraph")
+    
+    return {
+        "type": q_type,
+        "title": title_clean,
+        "description": desc or chunk_text,
+        "difficulty": "medium",
+        "points": 10,
+        "choices": choices if choices else None,
+        "correct_answer": correct_answer,
+        "sample_code": None,
+        "test_cases": None,
+        "time_limit": time_limit
+    }
+
+def fallback_parse_questions(prompt_text: str) -> list:
+    import re
+    split_pattern = r'(?:^|\n)(?=(?:Question\s*)?\d+[\.\)]\s+)'
+    chunks = [c.strip() for c in re.split(split_pattern, prompt_text, flags=re.IGNORECASE) if c.strip()]
+    
+    questions = []
+    if len(chunks) > 1:
+        for chunk in chunks:
+            parsed = parse_single_question_chunk(chunk)
+            if parsed:
+                questions.append(parsed)
+    else:
+        parsed = parse_single_question_chunk(prompt_text)
+        if parsed:
+            questions.append(parsed)
             
-        # Deduce correct answer
-        ans_match = re.search(r"(?:answer|correct|key)[\s:]*([A-D])", prompt_text, re.IGNORECASE)
-        correct_answer = None
-        if ans_match:
-            correct_letter = ans_match.group(1).upper()
-            correct_answer = option_map.get(correct_letter)
-            
-        if not correct_answer and choices:
-            # Fallback to matching direct words in choices
-            for choice in choices:
-                if choice.lower() in prompt_text.lower() and "answer:" in prompt_text.lower():
-                    correct_answer = choice
-                    break
-            if not correct_answer:
-                correct_answer = choices[0]
-                
-        # Clean description: remove choices from the end to make it neat
-        desc = prompt_text
-        for letter, content in matches:
-            desc = desc.replace(f"{letter}){content}", "").replace(f"{letter}.{content}", "").replace(f"{letter} {content}", "")
-            
-        if not choices:
-            choices = ["True", "False"]
-            correct_answer = "True"
-            
-        first_line = prompt_text.split("\n")[0].strip()
-        title = first_line[:40] + ("..." if len(first_line) > 40 else "")
-        if not title:
-            title = "AI MCQ Question"
-            
-        return {
-            "type": "mcq",
-            "title": title,
-            "description": desc.strip(),
-            "difficulty": "medium",
-            "points": 10,
-            "choices": choices,
-            "correct_answer": correct_answer,
-            "sample_code": None,
-            "test_cases": None,
-            "time_limit": time_limit
-        }
+    return questions
 
 @app.post("/questions/generate")
 async def generate_question(payload: dict, db: Session = Depends(get_db)):
@@ -800,6 +800,7 @@ async def generate_question(payload: dict, db: Session = Depends(get_db)):
                 "- 'sample_code': For coding questions, provide starter template code (e.g., Python function definition with 'pass'). For mcq or paragraph, null.\n"
                 "- 'test_cases': For coding questions, provide a list of test cases, each being an object like {'args': [...], 'expected': ...}. For mcq or paragraph, null.\n"
                 "- 'time_limit': An integer representing the time limit in seconds for this specific question (e.g. 60 for MCQ, 300 for coding). Use null if no limit is specified.\n"
+                "\nCRITICAL: If the user provides multiple numbered or separate questions (e.g. 1 to 10), you MUST output ALL questions as separate items inside the 'questions' list. Do NOT merge them into one question or return only the first question.\n"
                 "\nReturn ONLY valid JSON. Do not include markdown code block formatting (like ```json) or any conversational text."
             )
             
@@ -842,10 +843,9 @@ async def generate_question(payload: dict, db: Session = Depends(get_db)):
         elif isinstance(question_data, list):
             questions_list = question_data
 
-    # Fallback to single question parsing if nothing parsed
+    # Fallback to multi-question parsing if nothing parsed from LLM
     if not questions_list:
-        fallback_q = fallback_parse_question(prompt_text)
-        questions_list = [fallback_q]
+        questions_list = fallback_parse_questions(prompt_text)
 
     saved_questions = []
     try:
