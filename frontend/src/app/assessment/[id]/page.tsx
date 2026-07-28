@@ -52,15 +52,20 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
   const majorEventsCountRef = useRef(0);
   const maxStrikesRef = useRef(3);
   
-  // Theme, AI Engine & Camera Covered States
+  // Theme, AI Engine & Camera System States
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [cameraCovered, setCameraCovered] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(true);
+  const [isSystemReady, setIsSystemReady] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [initStepText, setInitStepText] = useState("");
+  const [initError, setInitError] = useState<string | null>(null);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
+  const startWebcamRef = useRef<(() => Promise<void>) | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const isTabActiveRef = useRef(true);
@@ -351,8 +356,12 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
     };
 
     const startWebcamAndLandmarker = async () => {
+      setIsInitializing(true);
+      setInitError(null);
       let webcamConnected = false;
+      
       try {
+        setInitStepText("Step 1/3: Requesting camera & microphone permissions...");
         // 1. Request Webcam and Microphone access with mobile front-camera priority
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           let stream: MediaStream;
@@ -456,11 +465,14 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
           throw new Error("Webcam/Microphone interface not supported by browser.");
         }
       } catch (err: any) {
-        addLog("Camera or Microphone access blocked/not found. Running in Offline Emulation mode.", "warning");
+        console.error("Camera/Mic access error:", err);
+        setInitError("Camera or Microphone access was denied or not found. Please click the camera icon in your browser URL bar to ALLOW access, then click Retry.");
+        addLog("Camera or Microphone access blocked/not found.", "warning");
         logIntegrityEvent("face_absent", "Webcam/Microphone device offline or permission denied.");
         setProctorStatus("danger");
         setProctorMessage("MEDIA OFFLINE");
         setCameraActive(isCameraBypassed);
+        setIsInitializing(false);
         if (!isCameraBypassed) {
           incrementMajorEvent("Camera/Microphone access blocked/not found");
         }
@@ -468,6 +480,7 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
 
       // 2. Initialize MediaPipe Face Landmarker & Object Detector (allows visual overlay & phone detection)
       try {
+        setInitStepText("Step 2/3: Downloading AI vision engines (Face Mesh & Device Detector)...");
         addLog("Loading AI Proctoring Vision Engines...", "info");
         const vision = await import("@mediapipe/tasks-vision");
         const filesetResolver = await vision.FilesetResolver.forVisionTasks(
@@ -521,12 +534,15 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
           ...vision.FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS
         ];
 
+        setInitStepText("Step 3/3: Calibrating face telemetry & audio monitor...");
         addLog("AI Proctoring Engine loaded.", "info");
         setIsAiLoading(false);
 
         if (webcamConnected) {
           setProctorStatus("secure");
           setProctorMessage("FACE TELEMETRY SECURE");
+          setIsSystemReady(true);
+          setIsInitializing(false);
 
           // Start actual video detection loop
           let lastDetectionTime = 0;
@@ -631,6 +647,8 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
           detectFrame();
         } else {
           // If no webcam, run an emulation timer that adds periodic telemetry warnings
+          setIsInitializing(false);
+          setIsSystemReady(true);
           let ticks = 0;
           const emulateLoop = () => {
             if (!active) return;
@@ -656,13 +674,15 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
       } catch (err: any) {
         console.error("AI Proctoring Engine failed to initialize:", err);
         addLog("Visual telemetry failed to initialize: " + err.message, "danger");
+        setInitError("AI Vision Engine model download failed: " + err.message + ". Please check internet connection and click Retry.");
         setProctorStatus("danger");
         setProctorMessage("AI OFFLINE");
         setIsAiLoading(false);
+        setIsInitializing(false);
       }
     };
 
-    startWebcamAndLandmarker();
+    startWebcamRef.current = startWebcamAndLandmarker;
 
     return () => {
       active = false;
@@ -678,6 +698,7 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
       }
     };
   }, []);
+
 
   // 3. Countdown Timer (Overall test - Optional)
   useEffect(() => {
@@ -856,6 +877,14 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
     }
   };
 
+  // Handle Ready Browser button click: engages fullscreen AND initializes webcam/AI models under user gesture
+  const handleReadyBrowserAndStart = async () => {
+    engageFullscreen();
+    if (startWebcamRef.current) {
+      await startWebcamRef.current();
+    }
+  };
+
   // Handle answers input changes
   const handleAnswerChange = (val: string) => {
     const currentQ = questions[currentIdx];
@@ -1007,43 +1036,110 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      {/* Secure Fullscreen Lock Overlay */}
-      {!isFullscreen && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 items-center justify-center p-6 text-center backdrop-blur-sm">
-          {/* Scanlines visual effect */}
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[size:100%_4px,3px_100%] pointer-events-none opacity-40"></div>
+      {/* Ready Browser & System Setup / Fullscreen Lock Overlay */}
+      {(!isSystemReady || !isFullscreen) && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 items-center justify-center p-6 text-center backdrop-blur-md overflow-y-auto">
+          {/* Subtle grid pattern background */}
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-20 pointer-events-none"></div>
           
-          <div className="max-w-md bg-slate-900 border border-slate-800 rounded-xl p-8 shadow-2xl relative z-10">
-            <div className="flex items-center justify-center space-x-2 border-b border-slate-800 pb-4 mb-6">
-              <span className="h-3 w-3 rounded-full bg-red-signal animate-pulse"></span>
-              <span className="font-mono text-xs tracking-wider text-red-signal uppercase font-bold">Secure Lock Required</span>
+          <div className="max-w-xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-[0_0_50px_rgba(0,0,0,0.8)] relative z-10 my-auto text-left">
+            {/* Header Badge */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
+              <div className="flex items-center space-x-2">
+                <span className="h-3 w-3 rounded-full bg-cyan-signal animate-ping"></span>
+                <span className="font-mono text-xs tracking-wider text-cyan-signal uppercase font-bold">Proctoring Hardware Readiness Check</span>
+              </div>
+              <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2.5 py-1 rounded border border-slate-700">
+                Candidate Verification
+              </span>
             </div>
-            
-            <div className="mx-auto w-16 h-16 rounded-full bg-red-signal/10 border border-red-signal/30 flex items-center justify-center text-red-signal text-3xl mb-6 font-mono font-bold">
-              [!]
-            </div>
-            
-            <h2 className="text-xl font-bold tracking-tight text-white mb-2">Fullscreen Mode Required</h2>
+
+            {/* Candidate Summary Card */}
+            {candidate && (
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 mb-6 flex items-center justify-between">
+                <div>
+                  <div className="text-white font-bold text-base">{candidate.name || "Candidate"}</div>
+                  <div className="text-slate-400 text-xs font-mono">{candidate.email || candidateId} {candidate.domain ? `• Track: ${candidate.domain}` : ""}</div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                    SESSION APPROVED
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <h2 className="text-2xl font-extrabold tracking-tight text-white mb-2">
+              Ready Your Browser & AI Proctor
+            </h2>
             <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-              This assessment is securely monitored. You must run the test in fullscreen mode to start or resume. Exiting fullscreen will log an integrity flag.
+              Click the button below to authorize camera access, download local AI detection models (Face Mesh & Cell Phone Detector), and lock your exam window in secure fullscreen mode.
             </p>
-            
-            {isAiLoading ? (
+
+            {/* Verification Checklist */}
+            <div className="space-y-3 mb-6 font-mono text-xs">
+              <div className={`p-3 rounded-lg border flex items-center space-x-3 ${webcamStreamRef.current ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-400" : "bg-slate-950/60 border-slate-800 text-slate-300"}`}>
+                <span className="text-base">{webcamStreamRef.current ? "✅" : "🎥"}</span>
+                <div className="flex-1">
+                  <div className="font-bold">Webcam & Microphone Feed</div>
+                  <div className="text-[10px] text-slate-400">User permission required for real-time video telemetry</div>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-lg border flex items-center space-x-3 ${isSystemReady ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-400" : "bg-slate-950/60 border-slate-800 text-slate-300"}`}>
+                <span className="text-base">{isSystemReady ? "✅" : "🧠"}</span>
+                <div className="flex-1">
+                  <div className="font-bold">AI Vision Engine (MediaPipe)</div>
+                  <div className="text-[10px] text-slate-400">Downloads lightweight client-side models for face gaze & phone detection</div>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded-lg border flex items-center space-x-3 ${isFullscreen ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-400" : "bg-slate-950/60 border-slate-800 text-slate-300"}`}>
+                <span className="text-base">{isFullscreen ? "✅" : "🖥️"}</span>
+                <div className="flex-1">
+                  <div className="font-bold">Secure Fullscreen Lock</div>
+                  <div className="text-[10px] text-slate-400">Prevents tab switching or external application overlay</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Error / Instruction Alert */}
+            {initError && (
+              <div className="bg-red-950/60 border border-red-800/80 rounded-xl p-4 mb-6 text-red-200 text-xs font-mono leading-relaxed">
+                <div className="font-bold text-red-400 mb-1 flex items-center space-x-2">
+                  <span>⚠️ Hardware Access Error</span>
+                </div>
+                <div>{initError}</div>
+                <div className="mt-2 text-[11px] text-red-300/80 border-t border-red-900/50 pt-2">
+                  💡 <strong>Tip:</strong> Look at your browser URL bar (top left), click the camera/lock icon 🔒, choose <strong>"Allow"</strong> for Camera & Microphone, and click Retry below.
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            {isInitializing ? (
               <button
                 disabled
-                className="w-full bg-slate-800 text-slate-400 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs flex items-center justify-center space-x-2 cursor-not-allowed opacity-80 font-mono"
+                className="w-full bg-slate-800 text-slate-300 font-bold uppercase tracking-wider py-4 px-6 rounded-xl text-xs flex items-center justify-center space-x-3 cursor-not-allowed font-mono border border-slate-700"
               >
-                <span className="h-2 w-2 rounded-full bg-cyan-signal animate-ping"></span>
-                <span>Initializing AI Proctoring Engine...</span>
+                <span className="h-3 w-3 rounded-full bg-cyan-signal animate-ping"></span>
+                <span>{initStepText || "Downloading AI Engines & Connecting Stream..."}</span>
               </button>
-            ) : (
+            ) : !isSystemReady ? (
+              <button
+                onClick={handleReadyBrowserAndStart}
+                className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:from-cyan-600 active:to-blue-700 text-slate-950 font-black uppercase tracking-wider py-4 px-6 rounded-xl text-xs transition duration-200 ease-in-out cursor-pointer shadow-[0_0_25px_rgba(6,182,212,0.4)] flex items-center justify-center space-x-2 font-mono"
+              >
+                <span>{initError ? "🔄 Retry Camera & AI Authorization" : "🚀 Ready Browser & Start Assessment"}</span>
+              </button>
+            ) : !isFullscreen ? (
               <button
                 onClick={engageFullscreen}
-                className="w-full bg-cyan-signal hover:bg-cyan-400 active:bg-cyan-500 text-slate-950 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs transition duration-150 ease-in-out cursor-pointer hover:shadow-[0_0_15px_rgba(10,235,255,0.4)] font-mono"
+                className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black uppercase tracking-wider py-4 px-6 rounded-xl text-xs transition duration-200 ease-in-out cursor-pointer shadow-[0_0_25px_rgba(245,158,11,0.4)] flex items-center justify-center space-x-2 font-mono"
               >
-                Engage Secure Lock & Start Assessment
+                <span>🖥️ Engage Fullscreen & Resume Assessment</span>
               </button>
-            )}
+            ) : null}
           </div>
         </div>
       )}
@@ -1140,10 +1236,18 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
         }`}>
           {/* Webcam Block */}
           <div className={`p-4 border-b ${theme === "light" ? "border-slate-200" : "border-slate-800"}`}>
-            <div className={`text-[10px] uppercase font-bold tracking-wider font-mono mb-2 ${
+            <div className={`flex items-center justify-between text-[10px] uppercase font-bold tracking-wider font-mono mb-2 ${
               theme === "light" ? "text-slate-400" : "text-slate-500"
             }`}>
-              Proctor Camera Feed
+              <span>Proctor Camera Feed</span>
+              {(proctorMessage === "MEDIA OFFLINE" || proctorMessage === "AI OFFLINE" || !isSystemReady) && (
+                <button
+                  onClick={handleReadyBrowserAndStart}
+                  className="text-cyan-400 hover:text-cyan-300 underline lowercase cursor-pointer font-semibold"
+                >
+                  🔄 re-connect camera
+                </button>
+              )}
             </div>
             <div className={`relative w-full aspect-video rounded-lg overflow-hidden border flex items-center justify-center transition-colors duration-300 ${
               theme === "light" ? "bg-slate-100 border-slate-200" : "bg-slate-950 border-slate-800"
