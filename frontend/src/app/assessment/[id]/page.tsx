@@ -352,15 +352,36 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
     const startWebcamAndLandmarker = async () => {
       let webcamConnected = false;
       try {
-        // 1. Request Webcam and Microphone access
+        // 1. Request Webcam and Microphone access with mobile front-camera priority
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          let stream: MediaStream;
+          try {
+            // Attempt mobile front-camera stream
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+              audio: true
+            });
+          } catch (mobileCamErr) {
+            // Fallback for standard desktop webcams
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          }
+
           webcamStreamRef.current = stream;
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
+            videoRef.current.setAttribute("playsinline", "true");
+            videoRef.current.setAttribute("autoplay", "true");
+            videoRef.current.setAttribute("muted", "true");
+            videoRef.current.play().catch((playErr) => console.warn("Video playback exception:", playErr));
           }
           addLog("Webcam & Microphone stream connected.", "info");
           webcamConnected = true;
+
+          // Detect in-app webview browsers (WhatsApp, Instagram, Gmail) that block WASM
+          const ua = navigator.userAgent || "";
+          if (ua.includes("FBAN") || ua.includes("FBAV") || ua.includes("Instagram") || ua.includes("Line") || ua.includes("WhatsApp")) {
+            addLog("In-App Browser detected. If AI shows offline, tap top-right menu (...) and select 'Open in Safari/Chrome'.", "warning");
+          }
 
           // Detect webcam unplugging or hardware disabling mid-test
           stream.getVideoTracks().forEach((track) => {
@@ -514,8 +535,9 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
             if (now - lastDetectionTime >= 150) {
               lastDetectionTime = now;
               
-              if (videoRef.current && videoRef.current.readyState >= 2 && landmarker) {
-                const video = videoRef.current;
+              const video = videoRef.current;
+              const isVideoReady = video && (video.readyState >= 2 || (video.readyState >= 1 && video.videoWidth > 0));
+              if (video && isVideoReady && landmarker) {
                 const canvas = canvasRef.current;
                 
                 if (canvas) {
