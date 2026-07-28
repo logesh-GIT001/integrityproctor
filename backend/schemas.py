@@ -6,7 +6,7 @@ from datetime import datetime
 # Candidate
 class CandidateCreate(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     overall_time_limit: Optional[int] = 1200
     domain: Optional[str] = "General"
 

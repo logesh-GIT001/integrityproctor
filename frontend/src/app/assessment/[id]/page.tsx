@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { FaceLandmarker as FaceLandmarkerType } from "@mediapipe/tasks-vision";
+import type { FaceLandmarker as FaceLandmarkerType, ObjectDetector as ObjectDetectorType } from "@mediapipe/tasks-vision";
 import { API_BASE_URL } from "@/config";
 
 interface Question {
@@ -169,6 +169,7 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     let active = true;
     let landmarker: FaceLandmarkerType | null = null;
+    let objectDetector: ObjectDetectorType | null = null;
     let animationFrameId: number;
     let contoursList: any[] = [];
     let irisesList: any[] = [];
@@ -443,15 +444,16 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
         }
       }
 
-      // 2. Initialize MediaPipe Face Landmarker anyway (allows visual overlay setup)
+      // 2. Initialize MediaPipe Face Landmarker & Object Detector (allows visual overlay & phone detection)
       try {
-        addLog("Loading AI Face Mesh Engine...", "info");
+        addLog("Loading AI Proctoring Vision Engines...", "info");
         const vision = await import("@mediapipe/tasks-vision");
         const filesetResolver = await vision.FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
         );
         
-        landmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
+        // Try GPU delegate first, fallback to CPU if GPU hardware acceleration is unsupported
+        const landmarkerOptions: any = {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
             delegate: "GPU"
@@ -460,7 +462,35 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
           numFaces: 2,
           outputFaceBlendshapes: true,
           outputFacialTransformationMatrixes: false
-        });
+        };
+
+        try {
+          landmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, landmarkerOptions);
+        } catch (gpuErr) {
+          console.warn("GPU acceleration unavailable for FaceLandmarker, falling back to CPU mode:", gpuErr);
+          landmarkerOptions.baseOptions.delegate = "CPU";
+          landmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, landmarkerOptions);
+        }
+
+        // Initialize ObjectDetector for cell phone detection (yolo_phone)
+        try {
+          const objectDetectorOptions: any = {
+            baseOptions: {
+              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+              delegate: "GPU"
+            },
+            scoreThreshold: 0.35,
+            runningMode: "VIDEO"
+          };
+          try {
+            objectDetector = await vision.ObjectDetector.createFromOptions(filesetResolver, objectDetectorOptions);
+          } catch (objGpuErr) {
+            objectDetectorOptions.baseOptions.delegate = "CPU";
+            objectDetector = await vision.ObjectDetector.createFromOptions(filesetResolver, objectDetectorOptions);
+          }
+        } catch (objErr) {
+          console.warn("ObjectDetector optional initialization skipped:", objErr);
+        }
 
         // Cache connection arrays
         contoursList = vision.FaceLandmarker.FACE_LANDMARKS_CONTOURS;
@@ -512,6 +542,33 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
                 }
 
                 const result = landmarker.detectForVideo(video, now);
+
+                // Run ObjectDetector for cell phone detection
+                if (objectDetector && !isBlack) {
+                  try {
+                    const objResult = objectDetector.detectForVideo(video, now);
+                    if (objResult.detections && objResult.detections.length > 0) {
+                      for (const det of objResult.detections) {
+                        for (const cat of det.categories) {
+                          const name = cat.categoryName.toLowerCase();
+                          if (name.includes("phone") || name.includes("cell") || name.includes("mobile")) {
+                            const curTime = Date.now();
+                            const lastLogged = lastEventLoggedRef.current["yolo_phone"] || 0;
+                            if (curTime - lastLogged > 12000) {
+                              lastEventLoggedRef.current["yolo_phone"] = curTime;
+                              addLog("Security Alert: Secondary electronic device (cell phone) detected in camera feed.", "danger");
+                              logIntegrityEvent("yolo_phone", "Visual Telemetry: Cell phone detected in candidate testing environment.");
+                            }
+                            setProctorStatus("danger");
+                            setProctorMessage("MOBILE PHONE DETECTED");
+                          }
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    // Ignore frame detection skips
+                  }
+                }
 
                 if (isBlack || blackFramesCountRef.current >= 15) {
                   setProctorStatus("danger");

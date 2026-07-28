@@ -871,12 +871,17 @@ export default function Dashboard() {
       overall_time_limit: inviteDuration * 60, // Convert minutes to seconds
     };
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const res = await fetch(`${API_BASE_URL}/candidates/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -892,9 +897,14 @@ export default function Dashboard() {
         const err = await res.json();
         setInviteError(err.detail || "Failed to generate invite code.");
       }
-    } catch (err) {
+    } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error(err);
-      setInviteError("Error connecting to server.");
+      if (err.name === "AbortError") {
+        setInviteError("Server waking up (cold start)... Please try clicking Generate again in 10-15 seconds.");
+      } else {
+        setInviteError("Error connecting to server. Ensure backend is running and CORS is configured.");
+      }
     } finally {
       setInvitingCandidate(false);
     }
