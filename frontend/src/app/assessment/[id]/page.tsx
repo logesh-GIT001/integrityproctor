@@ -52,9 +52,10 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
   const majorEventsCountRef = useRef(0);
   const maxStrikesRef = useRef(3);
   
-  // Theme & Camera Covered States
+  // Theme, AI Engine & Camera Covered States
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [cameraCovered, setCameraCovered] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(true);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -521,6 +522,7 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
         ];
 
         addLog("AI Proctoring Engine loaded.", "info");
+        setIsAiLoading(false);
 
         if (webcamConnected) {
           setProctorStatus("secure");
@@ -563,7 +565,12 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
                   blackFramesCountRef.current = 0;
                 }
 
-                const result = landmarker.detectForVideo(video, now);
+                let result: any = null;
+                try {
+                  result = landmarker.detectForVideo(video, now);
+                } catch (frameErr) {
+                  // Ignore momentary WebGL frame calculation skips
+                }
 
                 // Run ObjectDetector for cell phone detection
                 if (objectDetector && !isBlack) {
@@ -595,14 +602,14 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
                 if (isBlack || blackFramesCountRef.current >= 15) {
                   setProctorStatus("danger");
                   setProctorMessage("CAMERA COVERED / BLACK");
-                } else {
+                } else if (result) {
                   // Process results
                   checkIntegrity(result);
                 }
 
                 // Draw overlay
                 const ctx = canvas?.getContext("2d");
-                if (ctx && canvas) {
+                if (ctx && canvas && result) {
                   ctx.clearRect(0, 0, canvas.width, canvas.height);
                   const isWarning = consecutivesRef.current.face_absent > 5 || 
                                    consecutivesRef.current.face_multiple > 5 || 
@@ -651,6 +658,7 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
         addLog("Visual telemetry failed to initialize: " + err.message, "danger");
         setProctorStatus("danger");
         setProctorMessage("AI OFFLINE");
+        setIsAiLoading(false);
       }
     };
 
@@ -1020,12 +1028,22 @@ export default function AssessmentPage({ params }: { params: Promise<{ id: strin
               This assessment is securely monitored. You must run the test in fullscreen mode to start or resume. Exiting fullscreen will log an integrity flag.
             </p>
             
-            <button
-              onClick={engageFullscreen}
-              className="w-full bg-cyan-signal hover:bg-cyan-400 active:bg-cyan-500 text-slate-950 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs transition duration-150 ease-in-out cursor-pointer hover:shadow-[0_0_15px_rgba(10,235,255,0.4)]"
-            >
-              Engage Secure Lock & Start
-            </button>
+            {isAiLoading ? (
+              <button
+                disabled
+                className="w-full bg-slate-800 text-slate-400 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs flex items-center justify-center space-x-2 cursor-not-allowed opacity-80 font-mono"
+              >
+                <span className="h-2 w-2 rounded-full bg-cyan-signal animate-ping"></span>
+                <span>Initializing AI Proctoring Engine...</span>
+              </button>
+            ) : (
+              <button
+                onClick={engageFullscreen}
+                className="w-full bg-cyan-signal hover:bg-cyan-400 active:bg-cyan-500 text-slate-950 font-bold uppercase tracking-wider py-3.5 px-6 rounded-lg text-xs transition duration-150 ease-in-out cursor-pointer hover:shadow-[0_0_15px_rgba(10,235,255,0.4)] font-mono"
+              >
+                Engage Secure Lock & Start Assessment
+              </button>
+            )}
           </div>
         </div>
       )}
